@@ -131,6 +131,16 @@
     return { action: 'external', href: abs };
   }
 
+  // Constrain a GHHP_NAV path to the current repo root.
+  // Resolves against repoRoot and rejects '..'/absolute/cross-repo targets.
+  // -> safe repo-relative path | null
+  function resolveNavPath(path, info) {
+    if (typeof path !== 'string' || !path) return null;
+    const abs = resolveUrl(path, repoRoot(info));
+    if (!abs || !isRepoRel(abs, info)) return null;
+    return repoRelPath(abs, info) || null;
+  }
+
   // Scripts injected (as strings) into the rendered document.
   const LS_SHIM =
     "(function(){try{window.localStorage.getItem('__ghhp_probe');}catch(e){" +
@@ -150,6 +160,6 @@
   return {
     GH, MIME, extMime, parseBlobPath, repoRoot, dirHref, blobUrl, rawUrl,
     isRepoRel, resolveUrl, isHttpAbs, repoRelPath, extractCssUrls,
-    parseSrcset, buildSrcset, abToBase64, classifyAnchor, LS_SHIM, NAV_INTERCEPT
+    parseSrcset, buildSrcset, abToBase64, classifyAnchor, resolveNavPath, LS_SHIM, NAV_INTERCEPT
   };
 });

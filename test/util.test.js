@@ -115,6 +115,19 @@ test('classifyAnchor: repo-relative non-HTML -> none (left as-is)', () => {
   assert.equal(U.classifyAnchor('data/table.json', base, i).action, 'none');
 });
 
+test('resolveNavPath: keeps in-repo paths, rejects traversal/cross-repo/absolute', () => {
+  const i = { owner: 'owner', repo: 'repo', branch: 'branch', filepath: 'docs/index.html' };
+  assert.equal(U.resolveNavPath('docs/kinematics.html', i), 'docs/kinematics.html');
+  assert.equal(U.resolveNavPath('kinematics.html', i), 'kinematics.html');
+  assert.equal(U.resolveNavPath('sub/dir/page.html', i), 'sub/dir/page.html');
+  assert.equal(U.resolveNavPath('../../../../otherowner/otherrepo/raw/main/x.html', i), null);
+  assert.equal(U.resolveNavPath('../../../../../../settings/profile', i), null);
+  assert.equal(U.resolveNavPath('https://attacker.example/evil', i), null);
+  assert.equal(U.resolveNavPath('https://github.com/owner/repo/raw/branch/ok.html', i), 'ok.html');
+  assert.equal(U.resolveNavPath('', i), null);
+  assert.equal(U.resolveNavPath(null, i), null);
+});
+
 test('injected scripts (LS_SHIM, NAV_INTERCEPT) are syntactically valid JS', () => {
   assert.doesNotThrow(() => new Function(U.LS_SHIM)); // eslint-disable-line no-new-func
   assert.doesNotThrow(() => new Function(U.NAV_INTERCEPT)); // eslint-disable-line no-new-func

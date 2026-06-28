@@ -16,6 +16,12 @@
 importScripts(chrome.runtime.getURL('src/lib/util.js'));
 const U = globalThis.GHHPUtil;
 
+// Let the content script (untrusted context) use storage.session for the
+// one-shot preview handoff (kept in memory, never persisted to disk).
+try {
+  chrome.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' });
+} catch (e) { /* older Chrome without setAccessLevel */ }
+
 const ALLOW = ['https://github.com/', 'https://raw.githubusercontent.com/'];
 function allowed(url) { return ALLOW.some((p) => url.startsWith(p)); }
 
@@ -34,6 +40,7 @@ async function doFetch(url, as) {
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (!_sender || _sender.id !== chrome.runtime.id) return false; // only our own extension contexts
   if (msg && msg.type === 'OPEN_PREVIEW_TAB' && typeof msg.url === 'string') {
     chrome.tabs.create({ url: msg.url }, (tab) => sendResponse({ ok: true, tabId: tab && tab.id }));
     return true;

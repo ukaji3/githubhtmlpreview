@@ -46,7 +46,9 @@
     try {
       const finalHtml = await GHHP.acquire(info, report);
       const id = uid();
-      await chrome.storage.local.set({ ['bundle:' + id]: { finalHtml, report, ts: Date.now() } });
+      // storage.session is in-memory (not persisted to disk) -> avoids leaving
+      // private repo content at rest. Cleared when the browser session ends.
+      await chrome.storage.session.set({ ['bundle:' + id]: { finalHtml, report, ts: Date.now() } });
       await cleanupOldBundles(id);
       const hostUrl = chrome.runtime.getURL('src/host.html') + '#' + id;
       chrome.runtime.sendMessage({ type: 'OPEN_PREVIEW_TAB', url: hostUrl });
@@ -68,13 +70,13 @@
   // Keep only the most recent few bundles to bound storage usage.
   async function cleanupOldBundles(keepId) {
     try {
-      const all = await chrome.storage.local.get(null);
+      const all = await chrome.storage.session.get(null);
       const keys = Object.keys(all)
         .filter((k) => k.startsWith('bundle:') && k !== 'bundle:' + keepId)
         .map((k) => ({ k, ts: (all[k] && all[k].ts) || 0 }))
         .sort((a, b) => b.ts - a.ts);
       const stale = keys.slice(3).map((x) => x.k); // keep newest 3 (besides current)
-      if (stale.length) await chrome.storage.local.remove(stale);
+      if (stale.length) await chrome.storage.session.remove(stale);
     } catch (e) { /* best effort */ }
   }
 

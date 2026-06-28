@@ -1,7 +1,7 @@
 /*
  * GitHub HTML Preview : host page (NON-sandbox extension page)
  *
- * - Reads the assembled HTML + repo context from chrome.storage.local.
+ * - Reads the assembled HTML + repo context from chrome.storage.session.
  * - Toolbar: Back (history), current file path, "Open on GitHub", "Raw".
  * - Feeds the SANDBOXED viewer iframe; recreates it per render so its message
  *   listener is never lost to document.write.
@@ -101,14 +101,21 @@
   });
 
   window.addEventListener('message', (e) => {
-    if (!e.data) return;
+    const f = document.getElementById('frame');
+    if (!f || e.source !== f.contentWindow || !e.data) return; // only trust our own viewer iframe
     if (e.data.type === 'GHHP_VIEWER_READY') { postRender(); }
     else if (e.data.type === 'GHHP_VIEWER_LOG') { console.log('[GHHP viewer]', e.data.msg); }
-    else if (e.data.type === 'GHHP_NAV' && e.data.path) { render(e.data.path, true); }
+    else if (e.data.type === 'GHHP_NAV' && e.data.path && repo) {
+      const safe = U.resolveNavPath(e.data.path, { owner: repo.owner, repo: repo.repo, branch: repo.branch, filepath: currentPath() });
+      if (safe) render(safe, true);
+      else showBanner('リンク先がこのリポジトリ外のため、遷移を中止しました。');
+    }
   });
 
-  chrome.storage.local.get('bundle:' + id, (o) => {
-    const b = o && o['bundle:' + id];
+  chrome.storage.session.get('bundle:' + id, (o) => {
+    const key = 'bundle:' + id;
+    const b = o && o[key];
+    chrome.storage.session.remove(key); // one-shot handoff: consume immediately on every path
     if (!b || !b.report || !b.report.info) {
       showBanner('プレビュー内容が見つかりませんでした(再度プレビューしてください)。');
       return;
@@ -122,6 +129,5 @@
     }
     updateBar();
     postRender(); // initial viewer iframe is already present
-    chrome.storage.local.remove('bundle:' + id);
   });
 })();

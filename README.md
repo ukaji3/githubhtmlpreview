@@ -23,7 +23,7 @@ GitHub リポジトリ上の **HTML ファイル**を、生ソース表示では
 
 ```
 content script (github.com, HTML blob ページを検出)
-  └ acquire.js が認証取得 → 自己完結 HTML を組み立て → chrome.storage.local 経由で host へ
+  └ acquire.js が認証取得 → 自己完結 HTML を組み立て → chrome.storage.session 経由で host へ
         ・主HTML/相対アセットの取得は background service worker に委譲
           (SW は host_permissions による CORS 緩和 + ログイン Cookie 同送 = private 取得可)
         ・相対 CSS/JS/画像/srcset/inline style/preload/poster をインライン化(data: 等)
@@ -46,6 +46,11 @@ viewer.html (manifest sandbox.pages, opaque origin)
   sandbox ページの CSP のみ緩和でき、取得した任意 HTML/JS(CDN 含む)を実行できる。
 - **localStorage shim**:sandbox は opaque origin のため対象ページの `localStorage` が
   例外を投げる。shim を先頭注入してセッション内で機能させる。
+- **信頼境界の検証**:host は**自分の viewer iframe 由来の postMessage のみ**受理し、
+  `GHHP_NAV` のパスは**現リポジトリ内に正規化・制限**(`..`/絶対 URL/別リポジトリは破棄)。
+  これによりプレビュー中の悪意ある JS が host に任意 github.com パスを取得させる経路を塞ぐ。
+- **受け渡しストレージ**:`chrome.storage.session`(メモリ常駐・ディスク非永続)を使用し、
+  host は読込直後に**全経路で削除**。private 内容をディスクに残さない。
 
 ---
 
@@ -85,8 +90,10 @@ node --check src/*.js src/lib/*.js   # 構文チェック
 - **ページ内フラグメント(`#…`)**:内部 *.html 遷移時にスクロール位置は復元しない。
 - **CDN 依存**:KaTeX/Google Fonts 等はプレビュー時にネットワークから読み込む(sandbox CSP で許可)。
   完全オフライン化や Web Store 提出(RHC 厳格化)を狙う場合は CDN 資産もローカル実体化する方針が安全。
-- **ストレージ**:受け渡しに `chrome.storage.local`(+`unlimitedStorage`)を用い、古い bundle は
-  自動削除(最新数件のみ保持)。非常に巨大なページでは Cache Storage/IndexedDB 化が望ましい。
+- **ストレージ**:受け渡しに `chrome.storage.session`(メモリ常駐・ブラウザ終了で消去)を用い、
+  host は読込直後に削除(ワンショット)。このためプレビュータブを**再読込すると内容は消える**
+  (再度プレビューが必要)。`session` の容量上限(目安 10MB)を超える巨大ページは
+  エラー表示となる(ディスクへは退避しない=private 内容を残さない方針)。
 - 取得対象は `github.com` / `raw.githubusercontent.com` に限定(SW 側で許可ホストを制限)。
 - inline 重畳表示(blob ページ上に直接描画)は本バージョンでは非対応(new-tab 方針)。
 ```
