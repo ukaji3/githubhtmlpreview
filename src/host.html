@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>GitHub HTML Preview</title>
+  <style>
+    :root { color-scheme: light dark; }
+    html, body { margin: 0; height: 100%; }
+    body { display: flex; flex-direction: column; font: 13px/1.4 system-ui, sans-serif; }
+    #bar {
+      display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+      background: #24292f; color: #e6edf3; flex: 0 0 auto;
+    }
+    #bar button, #bar a {
+      font: 12px system-ui, sans-serif; color: #e6edf3; text-decoration: none;
+      background: #32383f; border: 1px solid #444c56; border-radius: 6px;
+      padding: 4px 9px; cursor: pointer; white-space: nowrap;
+    }
+    #bar button:disabled { opacity: .45; cursor: default; }
+    #bar a:hover, #bar button:not(:disabled):hover { background: #3c444d; }
+    #file { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #spacer { flex: 1 1 auto; }
+    #banner {
+      display: none; padding: 8px 12px; background: #b3261e; color: #fff; flex: 0 0 auto;
+      white-space: pre-wrap;
+    }
+    #frame { flex: 1 1 auto; border: 0; width: 100%; background: #fff; }
+    .brand { font-weight: 700; letter-spacing: .2px; opacity: .9; }
+  </style>
+</head>
+<body>
+  <div id="bar">
+    <span class="brand">⟪ HTML Preview ⟫</span>
+    <button id="back" title="前のページに戻る">◀ 戻る</button>
+    <span id="file" title="">—</span>
+    <span id="spacer"></span>
+    <a id="gh" target="_blank" rel="noopener noreferrer">GitHubで開く ↗</a>
+    <a id="raw" target="_blank" rel="noopener noreferrer">Raw ↗</a>
+  </div>
+  <div id="banner"></div>
+  <iframe id="frame" src="viewer.html"></iframe>
+  <script src="lib/util.js"></script>
+  <script src="acquire.js"></script>
+  <script src="host.js"></script>
+</body>
+</html>

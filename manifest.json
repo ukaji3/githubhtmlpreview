@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "GitHub HTML Preview",
+  "version": "1.0.0",
+  "description": "GitHub リポジトリ上の HTML ファイルを、生ソースではなく描画済みプレビューとして新しいタブで表示します(アクセス可能な private リポジトリにも対応)。",
+  "minimum_chrome_version": "116",
+  "permissions": ["storage", "unlimitedStorage"],
+  "host_permissions": [
+    "https://github.com/*",
+    "https://raw.githubusercontent.com/*"
+  ],
+  "background": { "service_worker": "src/background.js" },
+  "action": {
+    "default_title": "GitHub HTML Preview — このHTMLファイルをプレビュー",
+    "default_icon": {
+      "16": "assets/icon16.png",
+      "32": "assets/icon32.png",
+      "48": "assets/icon48.png",
+      "128": "assets/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "assets/icon16.png",
+    "32": "assets/icon32.png",
+    "48": "assets/icon48.png",
+    "128": "assets/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://github.com/*"],
+      "js": ["src/lib/util.js", "src/acquire.js", "src/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "sandbox": {
+    "pages": ["src/viewer.html"]
+  },
+  "content_security_policy": {
+    "sandbox": "sandbox allow-scripts allow-popups allow-modals allow-forms; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com; style-src 'self' 'unsafe-inline' https:; font-src https: data:; img-src * data: blob:; connect-src https:"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["src/host.html"],
+      "matches": ["https://github.com/*"]
+    }
+  ]
+}
