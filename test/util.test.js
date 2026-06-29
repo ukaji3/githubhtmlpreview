@@ -128,6 +128,11 @@ test('resolveNavPath: keeps in-repo paths, rejects traversal/cross-repo/absolute
   assert.equal(U.resolveNavPath(null, i), null);
 });
 
+test('segItemSelection matches GitHub SegmentedControl representation', () => {
+  assert.deepEqual(U.segItemSelection(true), { dataSelected: true, ariaCurrent: 'true', separator: 'transparent' });
+  assert.deepEqual(U.segItemSelection(false), { dataSelected: false, ariaCurrent: 'false', separator: 'var(--borderColor-default)' });
+});
+
 test('injected scripts (LS_SHIM, NAV_INTERCEPT) are syntactically valid JS', () => {
   assert.doesNotThrow(() => new Function(U.LS_SHIM)); // eslint-disable-line no-new-func
   assert.doesNotThrow(() => new Function(U.NAV_INTERCEPT)); // eslint-disable-line no-new-func

@@ -1,0 +1,45 @@
+<!doctype html>
+<!--
+  Headless verification of viewer.js content-height reporting (the double-scrollbar
+  fix). A load-time iframe loads the REAL src/viewer.html; the parent posts
+  GHHP_RENDER with tall content and asserts viewer.js reports GHHP_VIEWER_HEIGHT
+  >= the content height (so the parent can size the iframe to content = single
+  scrollbar). Run with: google-chrome --headless=new --virtual-time-budget=8000 --dump-dom
+-->
+<html lang="en"><head><meta charset="utf-8"><title>height fixture</title></head>
+<body>
+  <iframe id="v" src="../src/viewer.html" style="width:600px;height:200px;border:0"></iframe>
+  <pre id="h-result">H_RESULT={"stage":"init"}</pre>
+  <script>
+    (function () {
+      var TALL = '<!doctype html><html><body style="margin:0">'
+        + '<div style="height:3000px;background:#eee">TALL CONTENT</div>'
+        + '</body></html>';
+      var maxH = 0, ready = 0, heights = [];
+      function set(o) { try { document.getElementById('h-result').textContent = 'H_RESULT=' + JSON.stringify(o); } catch (_) {} }
+      window.addEventListener('message', function (e) {
+        if (!e.data) return;
+        if (e.data.type === 'GHHP_VIEWER_READY') {
+          ready++;
+          document.getElementById('v').contentWindow.postMessage({ type: 'GHHP_RENDER', html: TALL }, '*');
+        } else if (e.data.type === 'GHHP_VIEWER_HEIGHT') {
+          heights.push(e.data.height);
+          if (e.data.height > maxH) maxH = e.data.height;
+        }
+      });
+      function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+      (async function () {
+        set({ stage: 'started' });
+        for (var i = 0; i < 60 && maxH < 3000; i++) { await wait(50); }
+        set({
+          stage: 'done',
+          readySeen: ready,
+          maxHeight: maxH,
+          heightsCount: heights.length,
+          // PASS criteria: viewer reported a height that covers the 3000px content
+          reportsContentHeight: maxH >= 3000
+        });
+      })();
+    })();
+  </script>
+</body></html>

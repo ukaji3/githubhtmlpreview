@@ -6,21 +6,16 @@
  *     here: content scripts use the page origin and don't get the extension's
  *     host_permissions CORS bypass. The SW fetch sends login cookies and
  *     bypasses CORS for hosts in host_permissions -> enables PRIVATE repos.
- *  2. Open the preview host page in a new tab (OPEN_PREVIEW_TAB).
- *  3. Toolbar action click -> ask the active tab's content script to preview.
+ *  2. Toolbar action click -> tell the active tab's content script to toggle
+ *     the inline preview.
  *
- * Security: only github.com / raw.githubusercontent.com URLs are fetchable.
+ * Security: only github.com / raw.githubusercontent.com URLs are fetchable;
+ * messages are accepted only from this extension's own contexts.
  */
 'use strict';
 
 importScripts(chrome.runtime.getURL('src/lib/util.js'));
 const U = globalThis.GHHPUtil;
-
-// Let the content script (untrusted context) use storage.session for the
-// one-shot preview handoff (kept in memory, never persisted to disk).
-try {
-  chrome.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' });
-} catch (e) { /* older Chrome without setAccessLevel */ }
 
 const ALLOW = ['https://github.com/', 'https://raw.githubusercontent.com/'];
 function allowed(url) { return ALLOW.some((p) => url.startsWith(p)); }
@@ -41,10 +36,6 @@ async function doFetch(url, as) {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!_sender || _sender.id !== chrome.runtime.id) return false; // only our own extension contexts
-  if (msg && msg.type === 'OPEN_PREVIEW_TAB' && typeof msg.url === 'string') {
-    chrome.tabs.create({ url: msg.url }, (tab) => sendResponse({ ok: true, tabId: tab && tab.id }));
-    return true;
-  }
   if (msg && msg.type === 'GHHP_FETCH' && typeof msg.url === 'string') {
     doFetch(msg.url, msg.as || 'text')
       .then(sendResponse)
@@ -54,9 +45,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return false;
 });
 
-// Toolbar icon click: trigger a preview of the current tab if it is an HTML blob.
+// Toolbar icon click -> toggle the inline preview on the active tab.
 chrome.action.onClicked.addListener((tab) => {
   if (tab && tab.id) {
-    chrome.tabs.sendMessage(tab.id, { type: 'GHHP_RUN_PREVIEW' }, () => void chrome.runtime.lastError);
+    chrome.tabs.sendMessage(tab.id, { type: 'GHHP_TOGGLE_PREVIEW' }, () => void chrome.runtime.lastError);
   }
 });

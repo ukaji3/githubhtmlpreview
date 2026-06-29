@@ -1,0 +1,105 @@
+<!doctype html>
+<!--
+  Headless integration fixture for the content.js controller. Stubs chrome.* and
+  GHHP, reproduces GitHub's File view markup + code area, loads the REAL
+  util.js + ui.js + content.js, then drives: sync()->inject Preview tab ->
+  click Preview -> activate -> acquire(stub) -> viewer iframe (stub blob) ->
+  READY -> GHHP_RENDER round-trip.
+  Run: google-chrome --headless=new --no-sandbox --virtual-time-budget=6000 --dump-dom
+       | grep -o 'CTL_RESULT={[^<]*}'
+-->
+<html lang="en"><head><meta charset="utf-8"><title>controller fixture</title></head>
+<body>
+  <ul aria-label="File view" class="prc-SegmentedControl-SegmentedControl-x BlobTabButtons-module__SegmentedControl__y" data-variant="default" data-size="small">
+    <li class="prc-SegmentedControl-Item-z" data-selected="">
+      <button aria-current="true" class="prc-SegmentedControl-Button-w" type="button" style="--separator-color:transparent">
+        <span class="prc-SegmentedControl-Content-c segmentedControl-content">
+          <div class="prc-SegmentedControl-Text-t segmentedControl-text" data-text="Code">Code</div>
+        </span></button>
+    </li>
+    <li class="prc-SegmentedControl-Item-z">
+      <button aria-current="false" class="prc-SegmentedControl-Button-w" type="button" style="--separator-color:var(--borderColor-default)">
+        <span class="prc-SegmentedControl-Content-c segmentedControl-content">
+          <div class="prc-SegmentedControl-Text-t segmentedControl-text" data-text="Blame">Blame</div>
+        </span></button>
+    </li>
+  </ul>
+  <div class="CodeBlob-module__codeBlobWrapper__RS6In">CODE CONTENT</div>
+  <pre id="ctl-result">CTL_RESULT={"stage":"init"}</pre>
+
+  <script>
+    var VIEWER = '<!doctype html><meta charset="utf-8"><scr' + 'ipt>' +
+      'parent.postMessage({type:"GHHP_VIEWER_READY"},"*");' +
+      'addEventListener("message",function(e){if(e.data&&e.data.type==="GHHP_RENDER"){' +
+      'parent.postMessage({type:"__TEST_RENDERED",len:(e.data.html||"").length},"*");}});' +
+      '</scr' + 'ipt>OK';
+    var viewerUrl = URL.createObjectURL(new Blob([VIEWER], { type: 'text/html' }));
+    window.__acquire = [];
+    window.__rendered = [];
+    window.__err = null;
+    window.__ready = 0;
+    window.addEventListener('error', function (e) { window.__err = String((e && e.message) || e); });
+    window.addEventListener('message', function (e) { if (e.data && e.data.type === 'GHHP_VIEWER_READY') window.__ready++; });
+    window.chrome = {
+      runtime: {
+        id: 'test-ext',
+        getURL: function () { return viewerUrl; },
+        onMessage: { addListener: function () {} },
+        sendMessage: function () {}
+      }
+    };
+    window.GHHP = {
+      parseBlob: function () { return { owner: 'o', repo: 'r', branch: 'main', filepath: 'docs/index.html' }; },
+      acquire: function (info) { window.__acquire.push(info.filepath); return Promise.resolve('<h1>HELLO ' + info.filepath + '</h1>'); }
+    };
+    window.addEventListener('message', function (e) {
+      if (e.data && e.data.type === '__TEST_RENDERED') window.__rendered.push(e.data.len);
+    });
+  </script>
+  <script src="../src/lib/util.js"></script>
+  <script src="../src/ui.js"></script>
+  <script src="../src/content.js"></script>
+  <script>
+    (function () {
+      function set(o) { try { document.getElementById('ctl-result').textContent = 'CTL_RESULT=' + JSON.stringify(o); } catch (_) {} }
+      function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+      (async function () {
+        try {
+          set({ stage: 'started' });
+          var ul = null, prevBtn = null, tries = 0;
+          while (tries < 80) {
+            ul = document.querySelector('ul[aria-label="File view"]');
+            prevBtn = ul && ul.querySelector('[data-ghhp-preview-tab] button');
+            if (prevBtn) break;
+            await wait(50);
+            tries++;
+          }
+          if (!prevBtn) {
+            set({ stage: 'no-tab', tries: tries, hasUi: !!window.GHHPUi, hasUtil: !!window.GHHPUtil, err: window.__err, liCount: ul ? ul.querySelectorAll(':scope > li').length : -1 });
+            return;
+          }
+          prevBtn.click(); // -> activatePreview -> acquire -> iframe
+          var rtries = 0;
+          while (rtries < 80 && window.__rendered.length === 0) { await wait(50); rtries++; }
+          var code = document.querySelector('[class*="CodeBlob-module__codeBlobWrapper"]');
+          var frame = document.getElementById('ghhp-preview-frame');
+          var labels = Array.prototype.map.call(ul.querySelectorAll(':scope > li'),
+            function (li) { var t = li.querySelector('[data-text],.segmentedControl-text'); return t ? t.textContent : null; });
+          set({
+            stage: 'done',
+            tries: tries,
+            labels: labels,
+            tabInjected: labels[0] === 'Preview' && labels.length === 3,
+            codeHidden: code ? getComputedStyle(code).display === 'none' : null,
+            hostShown: !!document.getElementById('ghhp-preview-host'),
+            frameExists: !!frame,
+            frameUsesGetURL: frame ? (frame.getAttribute('src') === viewerUrl) : false,
+            readySeen: window.__ready,
+            acquireCalled: window.__acquire.slice(),
+            renderedLens: window.__rendered.slice()
+          });
+        } catch (e) { set({ stage: 'error', msg: String((e && e.message) || e) }); }
+      })();
+    })();
+  </script>
+</body></html>

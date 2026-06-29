@@ -1,0 +1,81 @@
+<!doctype html>
+<!--
+  Headless-DOM fixture for GHHPUi. Reproduces GitHub's blob "File view"
+  SegmentedControl SSR markup (Code | Blame, Code selected) plus a code area,
+  loads the REAL src/lib/util.js + src/ui.js, runs the injection + a simulated
+  Preview click, and emits a JSON result for assertion via:
+    google-chrome --headless=new --dump-dom test/ui.fixture.html | grep GHHP_RESULT=
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>fixture</title></head>
+<body>
+  <ul aria-label="File view" class="prc-SegmentedControl-SegmentedControl-lqIXp BlobTabButtons-module__SegmentedControl__jen2u" data-variant="default" data-size="small">
+    <li class="prc-SegmentedControl-Item-tSCQh" data-selected="">
+      <button aria-current="true" class="prc-SegmentedControl-Button-E48xz" type="button" style="--separator-color:transparent">
+        <span class="prc-SegmentedControl-Content-1COlk segmentedControl-content">
+          <div class="prc-SegmentedControl-Text-7S2y2 segmentedControl-text" data-text="Code">Code</div>
+        </span>
+      </button>
+    </li>
+    <li class="prc-SegmentedControl-Item-tSCQh">
+      <button aria-current="false" class="prc-SegmentedControl-Button-E48xz" type="button" style="--separator-color:var(--borderColor-default)">
+        <span class="prc-SegmentedControl-Content-1COlk segmentedControl-content">
+          <div class="prc-SegmentedControl-Text-7S2y2 segmentedControl-text" data-text="Blame">Blame</div>
+        </span>
+      </button>
+    </li>
+  </ul>
+  <div class="CodeBlob-module__codeBlobWrapper__RS6In">CODE CONTENT</div>
+
+  <script src="../src/lib/util.js"></script>
+  <script src="../src/ui.js"></script>
+  <script>
+    (function () {
+      const ul = GHHPUi.segControl();
+      const codeLiClassBefore = ul.querySelectorAll(':scope > li')[0].className;
+      const codeBtnClassBefore = ul.querySelectorAll(':scope > li')[0].querySelector('button').className;
+
+      let onPreviewCalls = 0, onLeaveCalls = 0;
+      GHHPUi.injectPreviewTab(ul, {
+        onPreview: function () { onPreviewCalls++; GHHPUi.markSelected(true); GHHPUi.showPreviewArea(); },
+        onLeave: function () { onLeaveCalls++; GHHPUi.markSelected(false); GHHPUi.hidePreviewArea(); }
+      });
+
+      // simulate user clicking the injected Preview segment
+      ul.querySelector('[' + GHHPUi.PREVIEW_TAB_ATTR + '] button').click();
+
+      const items = Array.prototype.slice.call(ul.querySelectorAll(':scope > li'));
+      const label = function (li) { var t = li.querySelector('.segmentedControl-text,[data-text]'); return t ? t.textContent : null; };
+      const ariaOf = function (li) { var b = li.querySelector('button'); return b ? b.getAttribute('aria-current') : null; };
+      const code = document.querySelector('[class*="CodeBlob-module__codeBlobWrapper"]');
+
+      const result = {
+        count: items.length,
+        labels: items.map(label),
+        firstIsPreview: items[0].hasAttribute(GHHPUi.PREVIEW_TAB_ATTR),
+        // exact-styling match: cloned Preview li/button keep the same Primer classes as Code
+        previewLiClassMatchesCode: items[0].className === codeLiClassBefore,
+        previewBtnClassMatchesCode: items[0].querySelector('button').className === codeBtnClassBefore,
+        previewSelected: items[0].hasAttribute('data-selected') && ariaOf(items[0]) === 'true',
+        previewSeparator: items[0].querySelector('button').style.getPropertyValue('--separator-color').trim(),
+        codeDeselected: ariaOf(items[1]) === 'false',
+        codeHidden: getComputedStyle(code).display === 'none',
+        hostShown: !!document.getElementById(GHHPUi.HOST_ID),
+        onPreviewCalls: onPreviewCalls,
+        // now simulate leaving via the Code segment
+        leftOk: (function () {
+          ul.querySelectorAll(':scope > li:not([' + GHHPUi.PREVIEW_TAB_ATTR + ']) button')[0].click();
+          return onLeaveCalls === 1
+            && ariaOf(items[0]) === 'false'        // preview deselected
+            && ariaOf(items[1]) === 'true'         // code reselected
+            && getComputedStyle(code).display !== 'none'; // code shown again
+        })()
+      };
+      const out = document.createElement('pre');
+      out.id = 'ghhp-result';
+      out.textContent = 'GHHP_RESULT=' + JSON.stringify(result);
+      document.body.appendChild(out);
+    })();
+  </script>
+</body>
+</html>

@@ -141,6 +141,15 @@
     return repoRelPath(abs, info) || null;
   }
 
+  // GitHub Primer SegmentedControl item state (matches github.com blob SSR):
+  //   selected  -> <li data-selected> <button aria-current="true" --separator-color:transparent>
+  //   unselected-> <button aria-current="false" --separator-color:var(--borderColor-default)>
+  function segItemSelection(selected) {
+    return selected
+      ? { dataSelected: true, ariaCurrent: 'true', separator: 'transparent' }
+      : { dataSelected: false, ariaCurrent: 'false', separator: 'var(--borderColor-default)' };
+  }
+
   // Scripts injected (as strings) into the rendered document.
   const LS_SHIM =
     "(function(){try{window.localStorage.getItem('__ghhp_probe');}catch(e){" +
@@ -160,6 +169,6 @@
   return {
     GH, MIME, extMime, parseBlobPath, repoRoot, dirHref, blobUrl, rawUrl,
     isRepoRel, resolveUrl, isHttpAbs, repoRelPath, extractCssUrls,
-    parseSrcset, buildSrcset, abToBase64, classifyAnchor, resolveNavPath, LS_SHIM, NAV_INTERCEPT
+    parseSrcset, buildSrcset, abToBase64, classifyAnchor, resolveNavPath, segItemSelection, LS_SHIM, NAV_INTERCEPT
   };
 });

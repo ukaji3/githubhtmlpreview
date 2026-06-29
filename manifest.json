@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "GitHub リポジトリ上の HTML ファイルを、生ソースではなく描画済みプレビューとして新しいタブで表示します(アクセス可能な private リポジトリにも対応)。",
   "minimum_chrome_version": "116",
-  "permissions": ["storage"],
+  "permissions": [],
   "host_permissions": [
     "https://github.com/*",
     "https://raw.githubusercontent.com/*"
@@ -28,7 +28,7 @@
   "content_scripts": [
     {
       "matches": ["https://github.com/*"],
-      "js": ["src/lib/util.js", "src/acquire.js", "src/content.js"],
+      "js": ["src/lib/util.js", "src/acquire.js", "src/ui.js", "src/content.js"],
       "run_at": "document_idle"
     }
   ],
@@ -40,7 +40,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["src/host.html"],
+      "resources": ["src/viewer.html"],
       "matches": ["https://github.com/*"]
     }
   ]
