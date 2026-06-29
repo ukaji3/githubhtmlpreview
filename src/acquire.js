@@ -26,12 +26,24 @@
   // stylesheet -> inline <style> url() rewrite dependency is preserved).
   const CONCURRENCY = 6;
 
-  async function swFetch(url, as) {
-    const r = await chrome.runtime.sendMessage({ type: 'GHHP_FETCH', url, as });
-    if (!r || !r.ok) {
-      throw new Error('HTTP ' + (r ? r.status : '?') + (r && r.error ? ' ' + r.error : ''));
+  async function swFetch(url, as, retries) {
+    // Retry once on failure: an MV3 service worker can be asleep and the first
+    // sendMessage can reject (channel closed), or the fetch can transiently
+    // fail. Without a retry such a blip leaves an asset un-inlined for the
+    // whole session (and the result gets cached), breaking the preview.
+    retries = retries == null ? 1 : retries;
+    let lastErr;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const r = await chrome.runtime.sendMessage({ type: 'GHHP_FETCH', url, as });
+        if (r && r.ok) return r.body;
+        lastErr = new Error('HTTP ' + (r ? r.status : '?') + (r && r.error ? ' ' + r.error : ''));
+      } catch (e) {
+        lastErr = e;
+      }
+      if (attempt < retries) await new Promise((res) => setTimeout(res, 150 * (attempt + 1)));
     }
-    return r.body;
+    throw lastErr;
   }
   const fetchText = (u) => swFetch(u, 'text');
   const fetchDataUrl = (u) => swFetch(u, 'dataurl');
@@ -47,6 +59,13 @@
     }
   }
 
+  // Inlining-or-absolute rule: for every repo-relative reference we either
+  // inline it (data:/inline content) or, if the fetch fails, fall back to the
+  // ABSOLUTE repo URL. We must NEVER leave a repo-relative URL in the output:
+  // the viewer document lives at chrome-extension://<id>/src/viewer.html, so a
+  // relative ref would resolve against the extension origin (ERR_FILE_NOT_FOUND)
+  // instead of the repo. (style/img/font load under the sandbox CSP via
+  // https:/*; scripts can only run when inlined, hence swFetch's retry.)
   async function processCssText(css, baseHref, info, report) {
     const refs = U.extractCssUrls(css).filter((r) => {
       const abs = U.resolveUrl(r.url, baseHref);
@@ -55,7 +74,7 @@
     for (const r of refs) {
       const abs = U.resolveUrl(r.url, baseHref);
       const d = await dataUrlFor(abs, report);
-      if (d) css = css.split(r.full).join('url(' + d + ')');
+      css = css.split(r.full).join('url(' + (d || abs) + ')');
     }
     return css;
   }
@@ -69,7 +88,7 @@
       const abs = U.resolveUrl(item.url, baseHref);
       if (abs && U.isRepoRel(abs, info)) {
         const d = await dataUrlFor(abs, report);
-        if (d) { item.url = d; changed = true; }
+        item.url = d || abs; changed = true;
       }
     }
     if (changed) el.setAttribute(attr, U.buildSrcset(list));
@@ -81,7 +100,7 @@
     const abs = U.resolveUrl(ref, baseHref);
     if (abs && U.isRepoRel(abs, info)) {
       const d = await dataUrlFor(abs, report);
-      if (d) el.setAttribute(attr, d);
+      el.setAttribute(attr, d || abs);
     }
   }
 
@@ -135,7 +154,10 @@
           style.textContent = css;
           link.replaceWith(style);
           report.assetsOk++;
-        } catch (e) { report.assetsFail.push(abs + ' :: ' + e.message); }
+        } catch (e) {
+          report.assetsFail.push(abs + ' :: ' + e.message);
+          link.setAttribute('href', abs); // fallback: absolute repo URL (style-src allows https:)
+        }
       }
     }, CONCURRENCY);
 
@@ -157,7 +179,10 @@
           if (s.type) ns.type = s.type;
           s.replaceWith(ns);
           report.assetsOk++;
-        } catch (e) { report.assetsFail.push(abs + ' :: ' + e.message); }
+        } catch (e) {
+          report.assetsFail.push(abs + ' :: ' + e.message);
+          s.setAttribute('src', abs); // fallback: absolute repo URL (avoids extension-origin 404)
+        }
       }
     }, CONCURRENCY);
 

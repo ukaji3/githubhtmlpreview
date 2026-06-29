@@ -1,0 +1,72 @@
+<!doctype html>
+<!--
+  Headless verification of acquire.js asset handling (the ERR_FILE_NOT_FOUND fix):
+   - a fetchable repo-relative <script> is inlined (no src left),
+   - a FAILING repo-relative script/stylesheet/image falls back to the ABSOLUTE
+     repo URL (never a relative URL that would resolve to chrome-extension://.../src/),
+   - swFetch retries once on failure,
+   - fragment-only anchors are left intact (no <base> side effects).
+  Network-free: chrome.runtime.sendMessage is stubbed with canned responses.
+  Run: google-chrome --headless=new --no-sandbox --virtual-time-budget=8000 --dump-dom
+-->
+<html lang="en"><head><meta charset="utf-8"><title>PENDING</title>
+<script src="../src/lib/util.js"></script>
+<script>
+  (function () {
+    var MAIN = 'https://github.com/o/r/raw/main/index.html';
+    var OK = 'https://github.com/o/r/raw/main/ok.js';
+    var mainHtml = '<!doctype html><html><head><meta charset="utf-8">'
+      + '<link rel="stylesheet" href="bad.css">'
+      + '<script src="ok.js"><\/script>'
+      + '<script src="bad.js"><\/script>'
+      + '</head><body><img src="bad.png"><a href="#sec">frag</a><h1>hi</h1></body></html>';
+    window.__calls = {};
+    var TEXT = {};
+    TEXT[MAIN] = mainHtml;
+    TEXT[OK] = 'window.__OK=1;';
+    globalThis.chrome = { runtime: { sendMessage: function (m) {
+      var k = m.url + '|' + m.as;
+      window.__calls[k] = (window.__calls[k] || 0) + 1;
+      return new Promise(function (resolve) {
+        // resolve async to mimic the real message channel
+        setTimeout(function () {
+          if (m.as === 'text' && Object.prototype.hasOwnProperty.call(TEXT, m.url)) {
+            resolve({ ok: true, status: 200, body: TEXT[m.url] });
+          } else {
+            resolve({ ok: false, status: 404 }); // everything else "fails"
+          }
+        }, 0);
+      });
+    } } };
+  })();
+</script>
+<script src="../src/acquire.js"></script>
+</head><body>
+<script>
+(async () => {
+  function set(o) { document.title = 'ACQ_RESULT=' + JSON.stringify(o); }
+  try {
+    const info = { owner: 'o', repo: 'r', branch: 'main', filepath: 'index.html' };
+    const report = { assetsOk: 0, assetsFail: [] };
+    const html = await GHHP.acquire(info, report);
+    const c = window.__calls;
+    set({
+      // ok.js fetched OK -> inlined (no leftover src, content present)
+      okInlined: !/src=["']ok\.js["']/.test(html) && /window\.__OK=1/.test(html),
+      // failing assets -> absolute repo URL, never relative
+      badJsAbsolute: html.indexOf('https://github.com/o/r/raw/main/bad.js') !== -1 && !/src=["']bad\.js["']/.test(html),
+      badCssAbsolute: html.indexOf('https://github.com/o/r/raw/main/bad.css') !== -1 && !/href=["']bad\.css["']/.test(html),
+      badPngAbsolute: html.indexOf('https://github.com/o/r/raw/main/bad.png') !== -1 && !/src=["']bad\.png["']/.test(html),
+      // no bare repo-relative asset URL must survive in the output
+      noRelativeAssetLeft: !/(src|href)=["'](bad\.(js|css|png))["']/.test(html),
+      // swFetch retried the failing script once (2 total attempts)
+      retriedBadJs: c['https://github.com/o/r/raw/main/bad.js|text'] === 2,
+      retriedBadCss: c['https://github.com/o/r/raw/main/bad.css|text'] === 2,
+      // fragment anchor preserved (no <base> regression)
+      fragmentPreserved: /href=["']#sec["']/.test(html),
+      assetsFailCount: report.assetsFail.length
+    });
+  } catch (e) { set({ error: String(e && e.message || e) }); }
+})();
+</script>
+</body></html>
