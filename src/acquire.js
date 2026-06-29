@@ -20,6 +20,12 @@
 
   const U = globalThis.GHHPUtil;
 
+  // M-6: bounded concurrency for SW-delegated asset fetches. Each acquire()
+  // loop parallelizes its element-level work up to this many in-flight tasks,
+  // while the loops themselves still run strictly in sequence (so the
+  // stylesheet -> inline <style> url() rewrite dependency is preserved).
+  const CONCURRENCY = 6;
+
   async function swFetch(url, as) {
     const r = await chrome.runtime.sendMessage({ type: 'GHHP_FETCH', url, as });
     if (!r || !r.ok) {
@@ -81,6 +87,32 @@
 
   // LS_SHIM / NAV_INTERCEPT scripts are provided by GHHPUtil (see src/lib/util.js).
 
+  // M-6: run worker(item, index) for every item with at most `limit` tasks in
+  // flight. Worker rejections propagate (matching the original serial `await`
+  // semantics); per-asset failures are already swallowed by dataUrlFor and the
+  // per-loop try/catch blocks, so no asset error escapes the pool. DOM edits
+  // (replaceWith/setAttribute) and report mutations (assetsOk++/assetsFail.push)
+  // touch independent elements and run on a single thread, so they are safe
+  // under interleaving; only the assetsFail array order may differ (the set of
+  // failures and the assetsOk count are unchanged).
+  async function runPool(items, worker, limit) {
+    const arr = Array.isArray(items) ? items : Array.from(items);
+    const n = arr.length;
+    if (n === 0) return;
+    let cursor = 0;
+    const width = Math.min(limit, n);
+    const runners = new Array(width);
+    for (let w = 0; w < width; w++) {
+      runners[w] = (async () => {
+        while (cursor < n) {
+          const i = cursor++;
+          await worker(arr[i], i);
+        }
+      })();
+    }
+    await Promise.all(runners);
+  }
+
   async function acquire(info, report) {
     const baseHref = U.dirHref(info);
     const mainUrl = U.rawUrl(info);
@@ -93,7 +125,7 @@
     const resolve = (ref) => U.resolveUrl(ref, baseHref);
 
     // <link rel=stylesheet> (repo) -> inline <style>; CDN left as-is
-    for (const link of Array.from(doc.querySelectorAll('link[rel~="stylesheet"][href]'))) {
+    await runPool(Array.from(doc.querySelectorAll('link[rel~="stylesheet"][href]')), async (link) => {
       const abs = resolve(link.getAttribute('href'));
       if (abs && U.isRepoRel(abs, info)) {
         try {
@@ -105,17 +137,17 @@
           report.assetsOk++;
         } catch (e) { report.assetsFail.push(abs + ' :: ' + e.message); }
       }
-    }
+    }, CONCURRENCY);
 
     // inline <style> blocks -> rewrite repo-relative url()
-    for (const style of Array.from(doc.querySelectorAll('style'))) {
+    await runPool(Array.from(doc.querySelectorAll('style')), async (style) => {
       if (style.textContent && /url\(/i.test(style.textContent)) {
         style.textContent = await processCssText(style.textContent, baseHref, info, report);
       }
-    }
+    }, CONCURRENCY);
 
     // <script src> (repo) -> inline; CDN left as-is
-    for (const s of Array.from(doc.querySelectorAll('script[src]'))) {
+    await runPool(Array.from(doc.querySelectorAll('script[src]')), async (s) => {
       const abs = resolve(s.getAttribute('src'));
       if (abs && U.isRepoRel(abs, info)) {
         try {
@@ -127,34 +159,34 @@
           report.assetsOk++;
         } catch (e) { report.assetsFail.push(abs + ' :: ' + e.message); }
       }
-    }
+    }, CONCURRENCY);
 
     // images: src + srcset
-    for (const img of Array.from(doc.querySelectorAll('img'))) {
+    await runPool(Array.from(doc.querySelectorAll('img')), async (img) => {
       await inlineAttrUrl(img, 'src', baseHref, info, report);
       await inlineSrcset(img, 'srcset', baseHref, info, report);
       img.removeAttribute('loading');
-    }
+    }, CONCURRENCY);
     // <picture><source>, <video><source>, <audio><source>
-    for (const src of Array.from(doc.querySelectorAll('source'))) {
+    await runPool(Array.from(doc.querySelectorAll('source')), async (src) => {
       await inlineAttrUrl(src, 'src', baseHref, info, report);
       await inlineSrcset(src, 'srcset', baseHref, info, report);
-    }
+    }, CONCURRENCY);
     // media posters
-    for (const v of Array.from(doc.querySelectorAll('video[poster]'))) {
+    await runPool(Array.from(doc.querySelectorAll('video[poster]')), async (v) => {
       await inlineAttrUrl(v, 'poster', baseHref, info, report);
-    }
+    }, CONCURRENCY);
     // <link rel=preload/icon/apple-touch-icon ...> hrefs
-    for (const l of Array.from(doc.querySelectorAll('link[rel~="preload"][href], link[rel~="icon"][href], link[rel~="apple-touch-icon"][href], link[rel~="mask-icon"][href]'))) {
+    await runPool(Array.from(doc.querySelectorAll('link[rel~="preload"][href], link[rel~="icon"][href], link[rel~="apple-touch-icon"][href], link[rel~="mask-icon"][href]')), async (l) => {
       await inlineAttrUrl(l, 'href', baseHref, info, report);
-    }
+    }, CONCURRENCY);
     // inline style="...url()..."
-    for (const el of Array.from(doc.querySelectorAll('[style]'))) {
+    await runPool(Array.from(doc.querySelectorAll('[style]')), async (el) => {
       const st = el.getAttribute('style');
       if (st && /url\(/i.test(st)) {
         el.setAttribute('style', await processCssText(st, baseHref, info, report));
       }
-    }
+    }, CONCURRENCY);
 
     // anchors: internal *.html -> in-tab nav; external http(s) -> new tab
     for (const a of Array.from(doc.querySelectorAll('a[href]'))) {
