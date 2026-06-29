@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "GitHub HTML Preview",
   "version": "1.0.0",
-  "description": "GitHub リポジトリ上の HTML ファイルを、生ソースではなく描画済みプレビューとして新しいタブで表示します(アクセス可能な private リポジトリにも対応)。",
+  "description": "GitHub リポジトリ上の HTML ファイルを、生ソースではなく描画済みプレビューとして blob ページ上にインライン表示します(アクセス可能な private リポジトリにも対応)。",
   "minimum_chrome_version": "116",
   "permissions": [],
   "host_permissions": [
