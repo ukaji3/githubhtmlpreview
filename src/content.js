@@ -15,6 +15,15 @@
   // scripts are not auto-executed on every file open; set true to fully mirror.
   const DEFAULT_TO_PREVIEW = false;
 
+  // Tunables (extracted from former inline literals; values are unchanged so
+  // behaviour is preserved while becoming configurable in one place).
+  const MIN_FRAME_H = 200;        // px: minimum viewer iframe height
+  const MAX_FRAME_H = 20000;      // px: clamp runaway content height (e.g. height:100vh)
+  const INITIAL_FRAME_H = 480;    // px: initial iframe height before content reports back
+  const RAF_FALLBACK_MS = 300;    // ms: sync fallback when rAF is throttled (background tab)
+  const POLL_MS = 1500;           // ms: periodic re-sync against SPA/React re-renders
+  const CACHE_MAX = 20;           // max cached rendered HTML docs (simple bounded LRU)
+
   let previewInfo = null;   // { owner, repo, branch, filepath } currently previewed
   let previewActive = false;
   let currentFrame = null;  // the live viewer iframe
@@ -22,7 +31,8 @@
   let lastKey = null;       // detects soft navigation to another file
   let autoActivated = false;
   let building = false;      // guards against re-entrant renders during an in-flight acquire
-  const htmlCache = new Map();
+  let renderSeq = 0;         // monotonic render id; only the latest render may commit (M-1)
+  const htmlCache = new Map(); // key: owner/repo/branch/filepath -> rendered HTML (H-1, M-3)
 
   function escapeHtml(s) {
     return String(s == null ? '' : s).replace(/[<&]/g, (c) => (c === '<' ? '&lt;' : '&amp;'));
@@ -35,9 +45,27 @@
       + '<p style="color:#57606a">GitHub にログイン済みか、ファイルへのアクセス権があるか確認してください。</p></body>';
   }
 
+  // Cache key includes the full file coordinates so the same path under a
+  // different owner/repo/branch never collides and shows a stale doc (H-1).
+  function cacheKey(info) {
+    return info.owner + '/' + info.repo + '/' + info.branch + '/' + info.filepath;
+  }
+
+  // Bounded insert into the rendered-HTML cache: a Map preserves insertion
+  // order, so evicting keys().next() drops the oldest entry once over the
+  // cap (simple LRU, M-3).
+  function cacheSet(key, html) {
+    htmlCache.set(key, html);
+    if (htmlCache.size > CACHE_MAX) {
+      const oldest = htmlCache.keys().next().value;
+      if (oldest !== undefined) htmlCache.delete(oldest);
+    }
+  }
+
   async function renderPath(path) {
     const host = Ui.ensureHost();
     if (!host) return;
+    const seq = ++renderSeq;   // claim the latest render slot (M-1)
     building = true;
     try {
       host.textContent = '';
@@ -47,17 +75,22 @@
       host.appendChild(loading);
 
       const info = { owner: previewInfo.owner, repo: previewInfo.repo, branch: previewInfo.branch, filepath: path };
+      const key = cacheKey(info);
       const report = { startedAt: new Date().toISOString(), info, mainOk: false, main: '', assetsOk: 0, assetsFail: [], error: null };
-      let html = htmlCache.get(path);
+      let html = htmlCache.get(key);
       if (html == null) {
         try {
           html = await GHHP.acquire(info, report);
-          htmlCache.set(path, html);
+          // Abort if a newer render started or the user left Preview while the
+          // (async) acquire was in flight: only the latest render commits (M-1).
+          if (seq !== renderSeq || !previewActive) return;
+          cacheSet(key, html);
         } catch (e) {
+          if (seq !== renderSeq || !previewActive) return;
           html = errorDoc(path, e.message);
         }
       }
-      if (!previewActive) return; // user switched back to Code while fetching
+      if (seq !== renderSeq || !previewActive) return; // stale render or user switched back to Code
       previewInfo = info;
       pendingHtml = html;
 
@@ -69,13 +102,16 @@
       // Height follows the rendered content (see GHHP_VIEWER_HEIGHT handler) so
       // there is no inner iframe scrollbar -> single page scrollbar, matching
       // GitHub Markdown. Start at a sensible min to avoid an initial flash.
-      frame.style.cssText = 'width:100%;height:480px;border:0;background:#fff;display:block;';
+      frame.style.cssText = 'width:100%;height:' + INITIAL_FRAME_H + 'px;border:0;background:#fff;display:block;';
       frame.scrolling = 'no';
       frame.src = chrome.runtime.getURL('src/viewer.html'); // WAR + manifest sandbox page
       host.appendChild(frame);
       currentFrame = frame;
     } finally {
-      building = false;
+      // Only the most recent render clears the in-flight guard, so an older
+      // render returning early cannot reopen the door for sync() while the
+      // latest acquire is still pending (M-1).
+      if (seq === renderSeq) building = false;
     }
   }
 
@@ -103,7 +139,7 @@
     } else if (e.data.type === 'GHHP_VIEWER_HEIGHT' && typeof e.data.height === 'number') {
       // size the iframe to its content (single page scrollbar). Clamp to avoid
       // runaway growth from pages using fixed `height:100vh` etc.
-      const h = Math.min(Math.max(e.data.height, 200), 20000);
+      const h = Math.min(Math.max(e.data.height, MIN_FRAME_H), MAX_FRAME_H);
       currentFrame.style.height = h + 'px';
     } else if (e.data.type === 'GHHP_NAV' && e.data.path) {
       const safe = U.resolveNavPath(e.data.path, previewInfo);
@@ -152,11 +188,11 @@
     let done = false;
     const run = () => { if (done) return; done = true; scheduled = false; try { sync(); } catch (e) { /* keep observer alive */ } };
     requestAnimationFrame(run); // fast path
-    setTimeout(run, 300);       // fallback when rAF is throttled (e.g., background tab)
+    setTimeout(run, RAF_FALLBACK_MS); // fallback when rAF is throttled (e.g., background tab)
   }
 
   const mo = new MutationObserver(schedule);
   mo.observe(document.documentElement, { childList: true, subtree: true });
-  setInterval(schedule, 1500);
+  setInterval(schedule, POLL_MS);
   schedule();
 })();
