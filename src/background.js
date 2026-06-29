@@ -17,21 +17,37 @@
 importScripts(chrome.runtime.getURL('src/lib/util.js'));
 const U = globalThis.GHHPUtil;
 
-const ALLOW = ['https://github.com/', 'https://raw.githubusercontent.com/'];
-function allowed(url) { return ALLOW.some((p) => url.startsWith(p)); }
+// Hard cap on a single proxied response body (25 MiB). Bounds memory use for
+// the base64/data: inlining done downstream and limits abuse of the proxy.
+const MAX_BYTES = 25 * 1024 * 1024;
 
 async function doFetch(url, as) {
-  if (!allowed(url)) return { ok: false, status: 0, error: 'blocked url' };
+  // 1) Validate the REQUESTED url (https + github.com/*.githubusercontent.com).
+  if (!U.isAllowedUrl(url)) return { ok: false, status: 0, error: 'blocked url' };
   const r = await fetch(url, { credentials: 'include', redirect: 'follow' });
+  // 2) redirect:'follow' may land on a different host; re-validate the FINAL
+  //    url so a 302 cannot send login cookies / leak the body to a host that
+  //    is not in our allow-list.
+  if (!U.isAllowedUrl(r.url)) return { ok: false, status: 0, error: 'redirect to disallowed host' };
   if (!r.ok) return { ok: false, status: r.status };
+  // 3a) Reject oversize bodies up front when the server declares a length.
+  const clen = Number(r.headers.get('content-length'));
+  if (Number.isFinite(clen) && clen > MAX_BYTES) {
+    return { ok: false, status: 0, error: 'response too large' };
+  }
   if (as === 'dataurl') {
     const buf = await r.arrayBuffer();
+    // 3b) Content-Length can be absent (e.g. chunked); enforce on real size.
+    if (buf.byteLength > MAX_BYTES) return { ok: false, status: 0, error: 'response too large' };
     const mime = U.extMime(url)
       || (r.headers.get('content-type') || '').split(';')[0]
       || 'application/octet-stream';
     return { ok: true, status: r.status, body: 'data:' + mime + ';base64,' + U.abToBase64(buf) };
   }
-  return { ok: true, status: r.status, body: await r.text() };
+  const text = await r.text();
+  // 3b) Same real-size guard for text bodies when Content-Length is missing.
+  if (text.length > MAX_BYTES) return { ok: false, status: 0, error: 'response too large' };
+  return { ok: true, status: r.status, body: text };
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
