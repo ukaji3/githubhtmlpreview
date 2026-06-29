@@ -29,16 +29,22 @@ private リポジトリ**にも対応(ログイン済みセッションの Cooki
 content script (github.com / HTML blob を検出)
   ├ GitHub の「File view」セグメント(Code|Blame)に「Preview」項目を clone 注入(UI一致)
   ├ Preview 選択時: コード領域を隠し、サンドボックス viewer iframe を同じ場所に表示
-  └ acquire.js が認証取得 → 自己完結 HTML を組み立て → iframe へ postMessage(GHHP_RENDER)
+  └ acquire.js が認証取得 → 自己完結 HTML を組み立て → viewer の READY 受信後に postMessage(GHHP_RENDER)
         ・主HTML/相対アセットの取得は background service worker に委譲
           (SW は host_permissions の CORS 緩和 + ログイン Cookie 同送 = private 取得可)
+          (SW は要求 URL と 302 追従後の最終 URL を許可ホストで検証 + 25MiB の応答上限)
         ・相対 CSS/JS/画像/srcset/inline style/preload/poster をインライン化(data: 等)
         ・CDN(KaTeX/Google Fonts 等)はそのまま(sandbox CSP が許可)
         ・内部 *.html リンク → 同一リポジトリ内に正規化してその場でナビ、外部 → 新規タブ
         ・localStorage shim を注入(sandbox の opaque origin 対策)
+        ・描画済み HTML は owner/repo/branch/filepath キーで LRU(上限20)キャッシュ
         ↓
-viewer.html (manifest sandbox.pages かつ web_accessible_resources, opaque origin)
-  └ document.write で実行。inline/eval/CDN が CSP 上許可される MV3 の正規実行環境
+viewer.html / viewer.js (manifest sandbox.pages かつ web_accessible_resources, opaque origin)
+  ├ document.write で実行。inline/eval/CDN が CSP 上許可される MV3 の正規実行環境
+  └ viewer.js が描画後の内容高さを測定し postMessage(GHHP_VIEWER_HEIGHT) で親へ報告
+        ↑
+content script が iframe を内容高さに追従(scrolling="no", 200–20000px に clamp)
+  → 内側スクロールバーを排し、ページ側の単一スクロールバーへ統一(Markdown と一致)
 ```
 
 ### 設計上の要点(根拠)
@@ -57,6 +63,23 @@ viewer.html (manifest sandbox.pages かつ web_accessible_resources, opaque orig
   `GHHP_NAV` のパスは**現リポジトリ内に正規化・制限**(`..`/絶対 URL/別リポジトリは破棄)。
 - **受け渡しストレージ不要**:インライン化により取得・描画は同一ページ内で完結し、
   ディスク/セッションストレージを一切使わない(`storage` 権限も不要)。
+- **単一スクロールバー(内容高さ追従)**:opaque origin の viewer iframe は内側に独自のスクロールバーを
+  持ち二重化しやすい。`viewer.js` が描画後に `documentElement`/`body` の scroll/offsetHeight の最大値を
+  測り、即時・遅延タイマ(50/200/600/1200/2500ms)・`load`・`ResizeObserver` で `GHHP_VIEWER_HEIGHT` を
+  親へ報告する。content script はこれを受けて iframe 高さを内容に追従させ(`scrolling="no"`、200–20000px に
+  clamp)、内側バーを排してページ側の単一スクロールバーへ統一する(Markdown プレビューと一致)。clamp 上限は
+  `height:100vh` 等による暴走を抑止する。
+- **取得経路の host 検証とサイズ上限**:SW は要求 URL に加え、`redirect:'follow'` 後の**最終 URL** も
+  `isAllowedUrl` で検証する。許可は https かつ `github.com` / `raw.githubusercontent.com` /
+  `*.githubusercontent.com`(`objects`/`codeload`/`media` 等の 302 追従先)のみで、`github.com.evil.com` の
+  ような look-alike・非 https・パース不能は拒否する。302 が許可外ホストへ着地した場合はステータスに依らず本文を
+  破棄し(ログイン Cookie・本文の漏えい防止)、応答本文は 25MiB を上限とする(Content-Length 宣言時は事前に、
+  chunked 等で欠落する場合は実バイト/文字数で遮断)。
+- **描画キャッシュの境界化(LRU)と並行再入ガード**:描画済み HTML は `owner/repo/branch/filepath` を
+  複合キーにキャッシュする。パス単独キーでは別 owner/repo/branch の同名パスが衝突して古い文書を誤表示し得る
+  ため座標を全て含める。挿入順を保つ `Map` で上限 20 件を超えたら最古を退避する単純 LRU により無制限な増加を
+  防ぐ。さらに各描画に単調増加の seq を割り当て、非同期取得の完了時・キャッシュ commit 時に「最新の描画かつ
+  Preview 継続中」のみ反映する(SPA 再同期やナビ連打での並行再入による誤コミットを排除)。
 
 ---
 
@@ -68,12 +91,15 @@ src/lib/util.js          純粋ロジック(URL解決/MIME/CSS url抽出/srcset/
 src/background.js        認証fetchプロキシ(GHHP_FETCH)+ action→Previewトグル
 src/acquire.js           取得・アセット実体化・自己完結HTML組立(GHHP.acquire / GHHP.parseBlob)
 src/ui.js                GHHPUi: Previewセグメント注入・選択状態・コード/プレビュー切替(GitHub UI一致, 実DOM検証対象)
-src/content.js           コントローラ: 取得→viewer描画・GHHP_NAV中継・SPA再同期・action連携
-src/viewer.html / viewer.js  sandbox ビューア(WAR、postMessage で受領し document.write 実行)
+src/content.js           コントローラ: 取得→viewer描画・iframe高さ追従・GHHP_NAV中継・SPA再同期・action連携
+src/viewer.html          sandbox ビューアのエントリ(WAR。viewer.js を読み込むだけの最小 DOM)
+src/viewer.js            sandbox ビューア本体: postMessage 受領→document.write 実行→内容高さを GHHP_VIEWER_HEIGHT 報告
 tools/gen-icons.js       アイコン(16/32/48/128 PNG)生成スクリプト(依存なし)
 assets/icon*.png         生成済みアイコン
-test/util.test.js        util.js の Node ユニットテスト(node --test)
-test/ui.fixture.html     GitHub実マークアップに対するGHHPUiの実DOM検証フィクスチャ(headless Chrome)
+test/util.test.js        util.js の Node ユニットテスト(parseSrcset/isAllowedUrl 等。node --test)
+test/ui.fixture.html     GHHPUi の Preview セグメント注入/トグルを実 DOM 検証するフィクスチャ(headless Chrome)
+test/controller.fixture.html  content.js の取得→viewer→READY→GHHP_RENDER 往復を実 DOM 検証(headless Chrome)
+test/height.fixture.html      viewer.js の内容高さ報告(GHHP_VIEWER_HEIGHT≥内容高さ)=二重スクロールバー修正を検証(headless Chrome)
 ```
 
 ---
@@ -99,7 +125,13 @@ google-chrome --headless=new --no-sandbox --dump-dom test/ui.fixture.html | grep
 - **CDN 依存**:KaTeX/Google Fonts 等はプレビュー時にネットワークから読み込む(sandbox CSP で許可)。
 - **GitHub の DOM 変更**:Preview セグメントは GitHub の React マークアップ(`ul[aria-label="File view"]`、
   Primer の `prc-SegmentedControl-*`)に依存して注入する。GitHub 側の大幅な変更で再調整が必要になりうる。
-- 取得対象は `github.com` / `raw.githubusercontent.com` に限定(SW 側で許可ホストを制限)。
-- 既定はソース(Code)表示。`content.js` の `DEFAULT_TO_PREVIEW=true` で Markdown と同様に
-  既定 Preview にできる(任意の HTML スクリプトを開いた瞬間に実行する点に留意)。
-```
+- 取得対象は https かつ `github.com` / `raw.githubusercontent.com`(及び 302 追従先の
+  `*.githubusercontent.com`)に限定(SW が `isAllowedUrl` で要求 URL と最終 URL を検証)。
+- **sandbox CSP の `connect-src https:`**:viewer は CDN ライブラリ(KaTeX 等)が実行時に行う `fetch`/
+  `XHR` を成立させるため `connect-src https:` を広く開けている。これは設計判断によるもので、viewer は
+  **opaque origin の sandbox ページ**として動くため github の Cookie も拡張の host_permissions も持たない。
+  したがってこの広い `connect-src` を通じて外部へ出得るのは**被プレビュー文書自身がそのスクリプトで送る内容に
+  限られ**、拡張の認証情報や他オリジンのデータは原理的に漏れない(認証取得は SW のみが host_permissions と
+  ログイン Cookie で実行する)。
+- 既定はソース(Code)表示(`content.js` の `DEFAULT_TO_PREVIEW` は既定値 `false`)。`true` にすると
+  Markdown と同様に既定 Preview にできる(任意の HTML スクリプトを開いた瞬間に実行する点に留意)。
