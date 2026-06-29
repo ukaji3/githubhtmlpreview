@@ -1,0 +1,9 @@
+# Local tooling / editor metadata
+.serena/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# OS
+.DS_Store
