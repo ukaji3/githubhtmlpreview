@@ -66,6 +66,24 @@
     return /^https?:\/\//i.test(String(href || ''));
   }
 
+  // True only for https URLs whose host is github.com, raw.githubusercontent.com,
+  // or any *.githubusercontent.com host. The wildcard covers the 302 redirect
+  // targets the auth fetch proxy follows (objects/codeload/media.githubusercontent.com).
+  // Used by the service worker to validate the FINAL host after redirects, so it
+  // must reject look-alikes (github.com.evil.com), non-https, and parse errors.
+  function isAllowedUrl(url) {
+    try {
+      const u = new URL(String(url));
+      if (u.protocol !== 'https:') return false;
+      const h = u.hostname;
+      return h === 'github.com'
+        || h === 'raw.githubusercontent.com'
+        || h.endsWith('.githubusercontent.com');
+    } catch (e) {
+      return false;
+    }
+  }
+
   // repo-relative path (e.g. "docs/kinematics.html") of an internal URL, else null
   function repoRelPath(absUrl, info) {
     if (!isRepoRel(absUrl, info)) return null;
@@ -86,15 +104,42 @@
   }
 
   // srcset attribute <-> list of {url, descriptor}
+  //
+  // WHATWG-style token scan (HTML Standard "parse a srcset attribute",
+  // simplified to "descriptor = up to next comma"). Unlike a naive
+  // value.split(','), this never splits on commas that live INSIDE a URL
+  // (e.g. `data:image/png;base64,AAAA`), which previously corrupted such
+  // candidates. The returned shape stays {url, descriptor}[] so buildSrcset
+  // round-trips unchanged.
   function parseSrcset(value) {
-    return String(value || '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .map((part) => {
-        const sp = part.split(/\s+/);
-        return { url: sp[0], descriptor: sp.slice(1).join(' ') };
-      });
+    const s = String(value == null ? '' : value);
+    const len = s.length;
+    const out = [];
+    const isWs = (c) => c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f';
+    let i = 0;
+    while (i < len) {
+      // 1) skip any leading whitespace and commas (candidate separators)
+      while (i < len && (isWs(s[i]) || s[i] === ',')) i++;
+      if (i >= len) break;
+      // 2) collect a run of non-whitespace as the URL token (may contain commas)
+      const start = i;
+      while (i < len && !isWs(s[i])) i++;
+      let token = s.slice(start, i);
+      // 3) a trailing comma terminates this candidate -> descriptor is empty
+      if (token.charCodeAt(token.length - 1) === 0x2c /* ',' */) {
+        token = token.replace(/,+$/, '');
+        if (token) out.push({ url: token, descriptor: '' });
+        continue;
+      }
+      // 4) otherwise skip whitespace, then read the descriptor up to the
+      //    next comma (which is consumed at the top of the next iteration)
+      while (i < len && isWs(s[i])) i++;
+      const dStart = i;
+      while (i < len && s[i] !== ',') i++;
+      const descriptor = s.slice(dStart, i).trim();
+      out.push({ url: token, descriptor: descriptor });
+    }
+    return out;
   }
   function buildSrcset(list) {
     return list.map((e) => (e.descriptor ? e.url + ' ' + e.descriptor : e.url)).join(', ');
@@ -168,7 +213,7 @@
 
   return {
     GH, MIME, extMime, parseBlobPath, repoRoot, dirHref, blobUrl, rawUrl,
-    isRepoRel, resolveUrl, isHttpAbs, repoRelPath, extractCssUrls,
+    isRepoRel, resolveUrl, isHttpAbs, isAllowedUrl, repoRelPath, extractCssUrls,
     parseSrcset, buildSrcset, abToBase64, classifyAnchor, resolveNavPath, segItemSelection, LS_SHIM, NAV_INTERCEPT
   };
 });

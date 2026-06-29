@@ -72,6 +72,70 @@ test('parseSrcset/buildSrcset round-trip', () => {
   assert.equal(U.buildSrcset([{ url: 'c.png', descriptor: '' }]), 'c.png');
 });
 
+test('parseSrcset: width descriptors and extra whitespace', () => {
+  assert.deepEqual(
+    U.parseSrcset('  small.png  480w ,  large.png   1024w  '),
+    [{ url: 'small.png', descriptor: '480w' }, { url: 'large.png', descriptor: '1024w' }]
+  );
+});
+
+test('parseSrcset: does NOT split on commas inside a data: URL', () => {
+  // M-5: a naive value.split(',') corrupted base64 data URLs. The token scan
+  // keeps the comma that belongs to the URL and only the space/comma between
+  // candidates separates them.
+  assert.deepEqual(
+    U.parseSrcset('data:image/png;base64,AAAA 1x, b.png 2x'),
+    [{ url: 'data:image/png;base64,AAAA', descriptor: '1x' }, { url: 'b.png', descriptor: '2x' }]
+  );
+});
+
+test('parseSrcset: candidates without a descriptor', () => {
+  assert.deepEqual(U.parseSrcset('only.png'), [{ url: 'only.png', descriptor: '' }]);
+  // comma-separated, no descriptors (trailing-comma path -> empty descriptor)
+  assert.deepEqual(
+    U.parseSrcset('a.png, b.png'),
+    [{ url: 'a.png', descriptor: '' }, { url: 'b.png', descriptor: '' }]
+  );
+  // single data URL with no descriptor keeps its inner comma
+  assert.deepEqual(
+    U.parseSrcset('data:image/gif;base64,R0lGOD'),
+    [{ url: 'data:image/gif;base64,R0lGOD', descriptor: '' }]
+  );
+});
+
+test('parseSrcset: empty / nullish input -> []', () => {
+  assert.deepEqual(U.parseSrcset(''), []);
+  assert.deepEqual(U.parseSrcset('   '), []);
+  assert.deepEqual(U.parseSrcset(',, ,'), []);
+  assert.deepEqual(U.parseSrcset(null), []);
+  assert.deepEqual(U.parseSrcset(undefined), []);
+});
+
+test('parseSrcset -> buildSrcset round-trip preserves data URL candidates', () => {
+  const src = 'data:image/png;base64,AAAA 1x, b.png 2x';
+  const list = U.parseSrcset(src);
+  assert.equal(U.buildSrcset(list), 'data:image/png;base64,AAAA 1x, b.png 2x');
+});
+
+test('isAllowedUrl: allows github.com / raw / *.githubusercontent.com over https', () => {
+  assert.ok(U.isAllowedUrl('https://github.com/o/r/raw/main/docs/index.html'));
+  assert.ok(U.isAllowedUrl('https://raw.githubusercontent.com/o/r/main/x.png'));
+  assert.ok(U.isAllowedUrl('https://objects.githubusercontent.com/github-production-release/x'));
+  assert.ok(U.isAllowedUrl('https://codeload.githubusercontent.com/o/r/zip/main'));
+  assert.ok(U.isAllowedUrl('https://media.githubusercontent.com/media/o/r/main/big.bin'));
+});
+
+test('isAllowedUrl: rejects look-alikes, non-https, foreign, and malformed hosts', () => {
+  assert.ok(!U.isAllowedUrl('https://github.com.evil.com/x'));        // suffix look-alike
+  assert.ok(!U.isAllowedUrl('http://github.com/x'));                  // not https
+  assert.ok(!U.isAllowedUrl('https://evil.com/x'));                   // unrelated host
+  assert.ok(!U.isAllowedUrl('https://notgithubusercontent.com/x'));   // missing the dot boundary
+  assert.ok(!U.isAllowedUrl('not a url'));                            // parse error -> false
+  assert.ok(!U.isAllowedUrl(''));
+  assert.ok(!U.isAllowedUrl(null));
+  assert.ok(!U.isAllowedUrl(undefined));
+});
+
 test('abToBase64 for Buffer and Uint8Array', () => {
   assert.equal(U.abToBase64(Buffer.from('hi')), 'aGk=');
   assert.equal(U.abToBase64(new Uint8Array([104, 105])), 'aGk=');
