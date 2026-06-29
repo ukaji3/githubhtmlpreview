@@ -84,7 +84,10 @@
           // Abort if a newer render started or the user left Preview while the
           // (async) acquire was in flight: only the latest render commits (M-1).
           if (seq !== renderSeq || !previewActive) return;
-          cacheSet(key, html);
+          // Only cache a fully-assembled render: if any asset failed to inline,
+          // a transient fetch miss must not be baked in for the rest of the
+          // session (next view re-attempts and can self-heal).
+          if (report.assetsFail.length === 0) cacheSet(key, html);
         } catch (e) {
           if (seq !== renderSeq || !previewActive) return;
           html = errorDoc(path, e.message);
