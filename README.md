@@ -1,7 +1,7 @@
 # GitHub HTML Preview
 
 GitHub リポジトリの **HTML ファイル**を、生ソースではなく **描画済みプレビュー**として
-**blob ページ上にインライン表示**する Chrome 拡張(Manifest V3)。GitHub の Markdown と同じく
+**blob / blame ページ上にインライン表示**する Chrome 拡張(Manifest V3)。GitHub の Markdown と同じく
 ファイルビューの **「Preview | Code | Blame」** セグメントで切り替えられる。**アクセス権のある
 private リポジトリ**にも対応(ログイン済みセッションの Cookie で取得)。
 
@@ -14,10 +14,10 @@ private リポジトリ**にも対応(ログイン済みセッションの Cooki
 
 1. `chrome://extensions` で「デベロッパーモード」を ON →「パッケージ化されていない拡張機能を読み込む」
    → このフォルダ(`manifest.json` のある場所)を選択。
-2. GitHub 上の HTML ファイル(例:`.../blob/main/docs/index.html`)を開く。
+2. GitHub 上の HTML ファイル(例:`.../blob/main/docs/index.html` または `.../blame/main/docs/index.html`)を開く。
 3. ファイルビューのツールバーに **「Preview」** セグメントが追加される(Markdown の見た目と一致)。
 4. **Preview** をクリック → コード表示と入れ替わりに描画済み HTML が表示される。
-   **Code** をクリックで元のソースへ戻る。
+   **Code** や **Blame** をクリックで元の表示へ戻る。
 5. プレビュー内の内部 `*.html` リンクはその場で辿れる(同一リポジトリ内に制限)。外部リンクは新規タブ。
    ツールバーの拡張アイコンでも Preview/Code をトグルできる。
 
@@ -26,7 +26,7 @@ private リポジトリ**にも対応(ログイン済みセッションの Cooki
 ## 動作概要
 
 ```
-content script (github.com / HTML blob を検出)
+content script (github.com / HTML blob・blame を検出)
   ├ GitHub の「File view」セグメント(Code|Blame)に「Preview」項目を clone 注入(UI一致)
   ├ Preview 選択時: コード領域を隠し、サンドボックス viewer iframe を同じ場所に表示
   └ acquire.js が認証取得 → 自己完結 HTML を組み立て → viewer の READY 受信後に postMessage(GHHP_RENDER)
@@ -80,6 +80,9 @@ content script が iframe を内容高さに追従(scrolling="no", 200–20000px
   ため座標を全て含める。挿入順を保つ `Map` で上限 20 件を超えたら最古を退避する単純 LRU により無制限な増加を
   防ぐ。さらに各描画に単調増加の seq を割り当て、非同期取得の完了時・キャッシュ commit 時に「最新の描画かつ
   Preview 継続中」のみ反映する(SPA 再同期やナビ連打での並行再入による誤コミットを排除)。
+- **blob/blame 両対応**:`parseBlobPath` が `/blob/` と `/blame/` の両パスを認識するため、
+  blame ページからも Preview を起動できる。URL のビュー種別(blob/blame)は取得パスに影響しない
+  (raw URL は常に `/raw/{branch}/{filepath}` で統一される)。
 
 ---
 
@@ -118,6 +121,19 @@ google-chrome --headless=new --no-sandbox --dump-dom test/ui.fixture.html | grep
 
 ---
 
+## プライバシー
+
+**このエクステンションはユーザーデータを一切収集・送信しない。**
+
+- 通信先は `github.com` と `*.githubusercontent.com` のみ(ユーザー操作時のみ)
+- 描画キャッシュはメモリのみ(ディスク非永続、タブ閉じで消去)
+- アナリティクス・テレメトリ・外部サービス連携なし
+- `storage` / `cookies` 等の権限は使用していない
+
+詳細は [PRIVACY.md](./PRIVACY.md) を参照。
+
+---
+
 ## 既知の制約
 
 - **JS が実行時に動的取得するリソースは静的発見できない**(`fetch`/動的 import 等)。
@@ -133,5 +149,11 @@ google-chrome --headless=new --no-sandbox --dump-dom test/ui.fixture.html | grep
   したがってこの広い `connect-src` を通じて外部へ出得るのは**被プレビュー文書自身がそのスクリプトで送る内容に
   限られ**、拡張の認証情報や他オリジンのデータは原理的に漏れない(認証取得は SW のみが host_permissions と
   ログイン Cookie で実行する)。
-- 既定はソース(Code)表示(`content.js` の `DEFAULT_TO_PREVIEW` は既定値 `false`)。`true` にすると
-  Markdown と同様に既定 Preview にできる(任意の HTML スクリプトを開いた瞬間に実行する点に留意)。
+- 既定は Preview 表示(Markdown の Preview と同じ挙動に準拠)。`content.js` の `DEFAULT_TO_PREVIEW` を
+  `false` にすると Code 表示を既定にできる。
+
+---
+
+## ライセンス
+
+[MIT](./LICENSE)
