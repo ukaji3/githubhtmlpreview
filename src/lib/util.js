@@ -31,9 +31,9 @@
     return m ? MIME[m[1].toLowerCase()] : undefined;
   }
 
-  // /{owner}/{repo}/blob/{branch}/{filepath...} -> info (HTML files only) | null
+  // /{owner}/{repo}/{blob|blame}/{branch}/{filepath...} -> info (HTML files only) | null
   function parseBlobPath(pathname) {
-    const m = String(pathname || '').match(/^\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/(.+)$/);
+    const m = String(pathname || '').match(/^\/([^/]+)\/([^/]+)\/(?:blob|blame)\/([^/]+)\/(.+)$/);
     if (!m) return null;
     let filepath;
     try { filepath = decodeURIComponent(m[4]); } catch (e) { filepath = m[4]; }
