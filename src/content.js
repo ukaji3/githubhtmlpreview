@@ -178,7 +178,19 @@
 
   function sync() {
     const info = GHHP.parseBlob();
-    if (!info) { lastKey = null; return; }
+    if (!info) {
+      // Not an HTML file (e.g. navigated to .md) — clean up everything.
+      lastKey = null;
+      if (previewActive) deactivatePreview();
+      const ul = Ui.segControl();
+      if (ul) {
+        const injected = ul.querySelector('[' + Ui.PREVIEW_TAB_ATTR + ']');
+        if (injected) injected.remove();
+      }
+      const host = document.getElementById(Ui.HOST_ID);
+      if (host) host.remove();
+      return;
+    }
     const key = info.owner + '/' + info.repo + '/' + info.branch + '/' + info.filepath;
     if (key !== lastKey) {
       lastKey = key;
