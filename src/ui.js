@@ -49,8 +49,28 @@
     const prev = items.find((li) => li.hasAttribute(PREVIEW_TAB_ATTR));
     const gh = items.filter((li) => !li.hasAttribute(PREVIEW_TAB_ATTR));
     if (!prev) return;
-    if (previewOn) { setItemSelected(prev, true); gh.forEach((li) => setItemSelected(li, false)); }
-    else { setItemSelected(prev, false); if (gh[0]) setItemSelected(gh[0], true); }
+    if (previewOn) {
+      setItemSelected(prev, true);
+      gh.forEach((li) => setItemSelected(li, false));
+    } else {
+      setItemSelected(prev, false);
+      // Restore the correct GitHub tab: check if one is already marked selected,
+      // otherwise infer from the URL (/blame/ vs /blob/).
+      const alreadySelected = gh.find((li) => li.hasAttribute('data-selected')
+        || (li.querySelector('button') && li.querySelector('button').getAttribute('aria-current') === 'true'));
+      if (alreadySelected) {
+        setItemSelected(alreadySelected, true);
+      } else {
+        const isBlame = /\/blame\//.test(location.pathname);
+        const target = isBlame
+          ? gh.find((li) => {
+              const t = li.textContent.trim().toLowerCase();
+              return t === 'blame' || t.includes('blame');
+            }) || gh[gh.length - 1]
+          : gh[0];
+        if (target) setItemSelected(target, true);
+      }
+    }
   }
 
   function bindGithubItems(ul, onLeave) {
@@ -98,16 +118,34 @@
     return host;
   }
 
+  // Blame-specific elements (age legend, marginals) outside codeArea().
+  function blameExtras() {
+    return document.querySelectorAll(
+      '[class*="BlameAgeLegend-module"], [class*="BlameHeader"], [class*="blame-hunk"], '
+      + '.react-blame-toggle-header, [class*="BlameMarginals"], [class*="blame-commit-title"]'
+    );
+  }
+
   function showPreviewArea() {
-    setDisplay(codeArea(), 'none');
+    const code = codeArea();
+    setDisplay(code, 'none');
+    blameExtras().forEach((el) => { el.dataset.ghhpHidden = '1'; setDisplay(el, 'none'); });
     const host = ensureHost();
-    if (host) setDisplay(host, '');
+    if (host) {
+      // Match the code area's margin-top so preview clears the sticky header.
+      if (code && !host.dataset.ghhpMargin) {
+        const mt = getComputedStyle(code).marginTop;
+        if (mt && mt !== '0px') { host.style.marginTop = mt; host.dataset.ghhpMargin = mt; }
+      }
+      setDisplay(host, '');
+    }
   }
 
   function hidePreviewArea() {
     const host = document.getElementById(HOST_ID);
     if (host) setDisplay(host, 'none');
     setDisplay(codeArea(), '');
+    blameExtras().forEach((el) => { delete el.dataset.ghhpHidden; setDisplay(el, ''); });
   }
 
   globalThis.GHHPUi = {

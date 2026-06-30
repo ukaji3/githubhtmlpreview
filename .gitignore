@@ -1,5 +1,6 @@
 # Local tooling / editor metadata
 .serena/
+.vscode/
 
 # Node
 node_modules/

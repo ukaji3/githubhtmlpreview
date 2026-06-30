@@ -19,15 +19,23 @@ test('parseBlobPath: valid HTML blob', () => {
   );
 });
 
+test('parseBlobPath: valid HTML blame', () => {
+  assert.deepEqual(
+    U.parseBlobPath('/o/r/blame/main/docs/index.html'),
+    { owner: 'o', repo: 'r', branch: 'main', filepath: 'docs/index.html' }
+  );
+});
+
 test('parseBlobPath: strips query/hash', () => {
   const i = U.parseBlobPath('/o/r/blob/main/docs/a.html?x=1#frag');
   assert.equal(i.filepath, 'docs/a.html');
 });
 
-test('parseBlobPath: rejects non-HTML and non-blob', () => {
+test('parseBlobPath: rejects non-HTML and non-blob/blame', () => {
   assert.equal(U.parseBlobPath('/o/r/blob/main/readme.md'), null);
   assert.equal(U.parseBlobPath('/o/r/tree/main'), null);
   assert.equal(U.parseBlobPath('/o/r'), null);
+  assert.equal(U.parseBlobPath('/o/r/commits/main/docs/index.html'), null); // not blob or blame
 });
 
 test('repoRoot/dirHref/blobUrl/rawUrl/isRepoRel', () => {

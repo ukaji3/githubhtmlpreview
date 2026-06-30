@@ -11,9 +11,8 @@
 
   const U = globalThis.GHHPUtil;
   const Ui = globalThis.GHHPUi;
-  // GitHub Markdown opens rendered (Preview) by default. Kept false so page
-  // scripts are not auto-executed on every file open; set true to fully mirror.
-  const DEFAULT_TO_PREVIEW = false;
+  // GitHub Markdown opens rendered (Preview) by default; mirror that.
+  const DEFAULT_TO_PREVIEW = true;
 
   // Tunables (extracted from former inline literals; values are unchanged so
   // behaviour is preserved while becoming configurable in one place).
@@ -30,6 +29,7 @@
   let pendingHtml = '';     // payload to post once the viewer signals READY
   let lastKey = null;       // detects soft navigation to another file
   let autoActivated = false;
+  let pendingAutoPreview = false; // set when navigating blame→blob for Preview
   let building = false;      // guards against re-entrant renders during an in-flight acquire
   let renderSeq = 0;         // monotonic render id; only the latest render may commit (M-1)
   const htmlCache = new Map(); // key: owner/repo/branch/filepath -> rendered HTML (H-1, M-3)
@@ -121,6 +121,26 @@
   async function activatePreview() {
     const info = GHHP.parseBlob();
     if (!info) return;
+    // Markdown-style: Preview lives on the /blob/ view. If on /blame/,
+    // navigate to /blob/ via the Code tab's SPA link (preserves content script
+    // state + htmlCache, avoiding a full re-render).
+    if (/\/blame\//.test(location.pathname)) {
+      const ul = Ui.segControl();
+      if (ul) {
+        const codeBtn = Array.from(ul.querySelectorAll(':scope > li:not([' + Ui.PREVIEW_TAB_ATTR + ']) button'))
+          .find((b) => { const t = b.textContent.trim().toLowerCase(); return t === 'code'; });
+        if (codeBtn) {
+          // Flag so sync() auto-activates Preview after the SPA nav lands.
+          pendingAutoPreview = true;
+          codeBtn.click();
+          return;
+        }
+      }
+      // Fallback: hard navigate if we can't find the Code button.
+      pendingAutoPreview = true;
+      location.pathname = location.pathname.replace(/\/blame\//, '/blob/');
+      return;
+    }
     previewInfo = info;
     previewActive = true;
     Ui.markSelected(true);
@@ -158,7 +178,19 @@
 
   function sync() {
     const info = GHHP.parseBlob();
-    if (!info) { lastKey = null; return; }
+    if (!info) {
+      // Not an HTML file (e.g. navigated to .md) — clean up everything.
+      lastKey = null;
+      if (previewActive) deactivatePreview();
+      const ul = Ui.segControl();
+      if (ul) {
+        const injected = ul.querySelector('[' + Ui.PREVIEW_TAB_ATTR + ']');
+        if (injected) injected.remove();
+      }
+      const host = document.getElementById(Ui.HOST_ID);
+      if (host) host.remove();
+      return;
+    }
     const key = info.owner + '/' + info.repo + '/' + info.branch + '/' + info.filepath;
     if (key !== lastKey) {
       lastKey = key;
@@ -174,6 +206,10 @@
     Ui.bindGithubItems(ul, deactivatePreview);
     if (DEFAULT_TO_PREVIEW && !autoActivated && !previewActive) {
       autoActivated = true;
+      activatePreview();
+    }
+    if (pendingAutoPreview && !previewActive && !building) {
+      pendingAutoPreview = false;
       activatePreview();
     }
     if (previewActive) {
